@@ -55,14 +55,25 @@ const row = db.prepare('SELECT COUNT(*) as count FROM game_config').get();
 if (row.count === 0) {
   const insert = db.prepare('INSERT INTO game_config (key, value) VALUES (?, ?)');
   insert.run('gameDuration', '60');
-  insert.run('level1HoldMs', '3000');
-  insert.run('level2HoldMs', '3000');
-  insert.run('level3HoldMs', '3000');
-  insert.run('level4HoldMs', '3000');
-  insert.run('level5Phases', '5');
-  insert.run('level6Phases', '5');
-  insert.run('level7DotCount', '8');
   insert.run('level8CatchTarget', '10');
+
+  // Asset path mappings (filenames in /api/assets/ or full URLs)
+  insert.run('asset_logo', 'logo.webp');
+  insert.run('asset_background', 'background.webp');
+  insert.run('asset_yuki_nori', 'yuki-and-nori.webp');
+  insert.run('asset_yuki_nori_success', 'yuki-and-nori-success.webp');
+  insert.run('asset_almost_there', 'almost-there.webp');
+  insert.run('asset_hot_gun', 'hot-gun.webp');
+  insert.run('asset_bola', 'bola.webp');
+  insert.run('asset_koper_game_8', 'koper-game-8.webp');
+  insert.run('asset_card1', 'card1.webp');
+  insert.run('asset_card2', 'card2.webp');
+  insert.run('asset_card3', 'card3.webp');
+  insert.run('asset_timer_icon', 'Icon-timer.png');
+  insert.run('asset_koper_level1', 'step-koper-game/game1.webp');
+  insert.run('asset_koper_level2', 'step-koper-game/game2-3-4.webp');
+  insert.run('asset_koper_level5', 'step-koper-game/game4-5-6.webp');
+  insert.run('asset_koper_level7', 'step-koper-game/game7-8.webp');
 }
 
 app.get('/', (req, res) => {
