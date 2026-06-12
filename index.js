@@ -254,6 +254,30 @@ app.post('/api/assets', async (req, res) => {
   }
 });
 
+app.put('/api/assets/:filename', async (req, res) => {
+  const { filename } = req.params;
+  if (filename.includes('..') || filename.includes('/')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const ext = '.' + filename.split('.').pop().toLowerCase();
+  if (!ASSET_MIME_MAP[ext]) {
+    return res.status(400).json({ error: 'Unsupported file type' });
+  }
+  try {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    if (chunks.length === 0) {
+      return res.status(400).json({ error: 'Empty file data' });
+    }
+    const filePath = join(ASSETS_DIR, filename);
+    await writeFile(filePath, Buffer.concat(chunks));
+    res.json({ message: 'Asset saved', filename, size: Buffer.concat(chunks).length, url: `/api/assets/${filename}` });
+  } catch (err) {
+    console.error('Error saving asset:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.delete('/api/assets/:filename', async (req, res) => {
   const { filename } = req.params;
   if (filename.includes('..') || filename.includes('/')) {
