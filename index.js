@@ -13,7 +13,13 @@ if (!existsSync(VIDEOS_DIR)) {
   mkdirSync(VIDEOS_DIR, { recursive: true });
 }
 
-app.use(cors({ origin: '*' }));
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Range'],
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length']
+}));
+app.options('*', cors());
 app.use('/api/collect-data', express.json());
 app.use('/api/collect-data', express.urlencoded({ extended: true }));
 
