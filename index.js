@@ -8,9 +8,13 @@ import { join } from 'node:path';
 const app = express();
 const PORT = process.env.PORT || 3000;
 const VIDEOS_DIR = join(import.meta.dirname, 'videos');
+const ASSETS_DIR = join(import.meta.dirname, 'assets');
 
 if (!existsSync(VIDEOS_DIR)) {
   mkdirSync(VIDEOS_DIR, { recursive: true });
+}
+if (!existsSync(ASSETS_DIR)) {
+  mkdirSync(ASSETS_DIR, { recursive: true });
 }
 
 app.use(cors({
@@ -38,6 +42,28 @@ db.exec(`
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS game_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )
+`);
+
+// Seed default config if empty
+const row = db.prepare('SELECT COUNT(*) as count FROM game_config').get();
+if (row.count === 0) {
+  const insert = db.prepare('INSERT INTO game_config (key, value) VALUES (?, ?)');
+  insert.run('gameDuration', '60');
+  insert.run('level1HoldMs', '3000');
+  insert.run('level2HoldMs', '3000');
+  insert.run('level3HoldMs', '3000');
+  insert.run('level4HoldMs', '3000');
+  insert.run('level5Phases', '5');
+  insert.run('level6Phases', '5');
+  insert.run('level7DotCount', '8');
+  insert.run('level8CatchTarget', '10');
+}
 
 app.get('/', (req, res) => {
   res.json({ message: 'Hello World — Backend is running' });
@@ -83,6 +109,151 @@ app.post('/api/collect-data', (req, res) => {
     console.error('Error saving data:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// ── Game Config ──────────────────────────────────────────────
+app.use('/api/game-config', express.json());
+
+app.get('/api/game-config', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT key, value FROM game_config').all();
+    const config = {};
+    for (const row of rows) config[row.key] = row.value;
+    res.json(config);
+  } catch (err) {
+    console.error('Error fetching game config:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/game-config', (req, res) => {
+  try {
+    const payload = req.body;
+    if (!payload || typeof payload !== 'object') {
+      return res.status(400).json({ error: 'Request body must be an object' });
+    }
+    const upsert = db.prepare(`
+      INSERT INTO game_config (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    const tx = db.transaction((entries) => {
+      for (const [key, value] of Object.entries(entries)) {
+        upsert.run(key, String(value));
+      }
+    });
+    tx(payload);
+    const rows = db.prepare('SELECT key, value FROM game_config').all();
+    const config = {};
+    for (const row of rows) config[row.key] = row.value;
+    res.json(config);
+  } catch (err) {
+    console.error('Error updating game config:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Asset Management ─────────────────────────────────────────
+const ASSET_MIME_MAP = {
+  '.webp': 'image/webp',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+};
+
+app.get('/api/assets', async (req, res) => {
+  try {
+    const files = await readdir(ASSETS_DIR);
+    const assets = files
+      .filter(f => Object.keys(ASSET_MIME_MAP).some(ext => f.toLowerCase().endsWith(ext)))
+      .map(f => {
+        const stats = existsSync(join(ASSETS_DIR, f)) ? statSync(join(ASSETS_DIR, f)) : null;
+        return {
+          filename: f,
+          size: stats?.size || 0,
+          updatedAt: stats?.mtime?.toISOString() || null,
+          url: `/api/assets/${f}`,
+        };
+      })
+      .sort((a, b) => b.updatedAt?.localeCompare(a.updatedAt));
+    res.json(assets);
+  } catch (err) {
+    console.error('Error listing assets:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/assets/:filename', (req, res) => {
+  const { filename } = req.params;
+  // Prevent directory traversal
+  if (filename.includes('..') || filename.includes('/')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const ext = '.' + filename.split('.').pop().toLowerCase();
+  const mime = ASSET_MIME_MAP[ext] || 'application/octet-stream';
+  const filePath = join(ASSETS_DIR, filename);
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: 'Asset not found' });
+  }
+  res.set('Content-Type', mime);
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(filePath);
+});
+
+app.post('/api/assets', async (req, res) => {
+  try {
+    const contentType = req.headers['content-type'] || '';
+    if (!contentType.startsWith('multipart/form-data')) {
+      return res.status(400).json({ error: 'Content-Type must be multipart/form-data' });
+    }
+    const boundary = '--' + contentType.split('boundary=')[1];
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const raw = Buffer.concat(chunks);
+
+    // Simple multipart parser
+    const parts = raw.toString('latin1').split(boundary).filter(p => p.includes('filename="'));
+    const saved = [];
+    for (const part of parts) {
+      const headerEnd = part.indexOf('\r\n\r\n');
+      if (headerEnd === -1) continue;
+      const header = part.slice(0, headerEnd);
+      const filenameMatch = header.match(/filename="(.+)"/);
+      if (!filenameMatch) continue;
+      const filename = filenameMatch[1].replace(/[^a-zA-Z0-9._-]/g, '');
+      if (!filename) continue;
+
+      const dataStart = headerEnd + 4;
+      const dataEnd = part.lastIndexOf('\r\n');
+      const fileData = Buffer.from(part.slice(dataStart, dataEnd === -1 ? undefined : dataEnd), 'latin1');
+
+      await writeFile(join(ASSETS_DIR, filename), fileData);
+      saved.push({ filename, size: fileData.length, url: `/api/assets/${filename}` });
+    }
+    res.json({ message: 'Assets uploaded', assets: saved });
+  } catch (err) {
+    console.error('Error uploading assets:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/assets/:filename', async (req, res) => {
+  const { filename } = req.params;
+  if (filename.includes('..') || filename.includes('/')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const filePath = join(ASSETS_DIR, filename);
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: 'Asset not found' });
+  }
+  await unlink(filePath);
+  res.json({ message: 'Asset deleted', filename });
 });
 
 const MIME_MAP = { '.webm': 'video/webm', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo' };
@@ -176,6 +347,11 @@ app.delete('/api/video-user/:id', async (req, res) => {
     console.error('Error deleting video:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// ── Catch-all 404 ────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found', path: req.originalUrl });
 });
 
 app.listen(PORT, () => {
