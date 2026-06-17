@@ -127,6 +127,30 @@ app.post('/api/collect-data', (req, res) => {
   }
 });
 
+// ── Visitor Tracking ──────────────────────────────────────────
+app.post('/api/visitors', (req, res) => {
+  try {
+    const row = db.prepare("SELECT value FROM game_config WHERE key = 'visitor_count'").get();
+    const count = row ? parseInt(row.value, 10) + 1 : 1;
+    db.prepare(`INSERT INTO game_config (key, value) VALUES ('visitor_count', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(count));
+    res.json({ count });
+  } catch (err) {
+    console.error('Error tracking visitor:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/visitors', (req, res) => {
+  try {
+    const row = db.prepare("SELECT value FROM game_config WHERE key = 'visitor_count'").get();
+    res.json({ count: row ? parseInt(row.value, 10) : 0 });
+  } catch (err) {
+    console.error('Error fetching visitors:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Lose Count Update ─────────────────────────────────────────
 app.put('/api/collect-data/lose/:email', express.json(), (req, res) => {
   try {
