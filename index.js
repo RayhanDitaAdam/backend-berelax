@@ -39,9 +39,13 @@ db.exec(`
     joinDraw TEXT NOT NULL DEFAULT 'no',
     phone TEXT DEFAULT '',
     source TEXT DEFAULT '',
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    loseCount INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `);
+
+// Add loseCount column if upgrading from old schema
+try { db.exec(`ALTER TABLE submissions ADD COLUMN loseCount INTEGER NOT NULL DEFAULT 0`); } catch {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS game_config (
@@ -92,15 +96,15 @@ app.get('/api/collect-data', (req, res) => {
 
 app.post('/api/collect-data', (req, res) => {
   try {
-    const { firstName, lastName, email, joinDraw, phone, source } = req.body;
+    const { firstName, lastName, email, joinDraw, phone, source, loseCount } = req.body;
 
     if (!firstName || !lastName || !email) {
       return res.status(400).json({ error: 'firstName, lastName, and email are required' });
     }
 
     const stmt = db.prepare(`
-      INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -109,7 +113,8 @@ app.post('/api/collect-data', (req, res) => {
       email.trim(),
       joinDraw === true || joinDraw === 'yes' || joinDraw === 'true' ? 'yes' : 'no',
       (phone || '').trim(),
-      (source || '').trim()
+      (source || '').trim(),
+      loseCount != null ? loseCount : 0
     );
 
     res.status(201).json({
@@ -118,6 +123,34 @@ app.post('/api/collect-data', (req, res) => {
     });
   } catch (err) {
     console.error('Error saving data:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Lose Count Update ─────────────────────────────────────────
+app.put('/api/collect-data/lose/:email', express.json(), (req, res) => {
+  try {
+    const { email } = req.params;
+    const { loseCount } = req.body;
+
+    if (loseCount == null) {
+      return res.status(400).json({ error: 'loseCount is required' });
+    }
+
+    // Upsert: update if email exists, otherwise insert
+    const existing = db.prepare('SELECT id, loseCount FROM submissions WHERE email = ?').get(email);
+    if (existing) {
+      db.prepare('UPDATE submissions SET loseCount = ? WHERE email = ?').run(loseCount, email);
+      res.json({ message: 'loseCount updated', email, loseCount });
+    } else {
+      const result = db.prepare(`
+        INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('', '', email, 'no', '', 'game-lose', loseCount);
+      res.status(201).json({ message: 'lose record created', email, loseCount, id: result.lastInsertRowid });
+    }
+  } catch (err) {
+    console.error('Error updating lose count:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
