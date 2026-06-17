@@ -151,30 +151,51 @@ app.get('/api/visitors', (req, res) => {
   }
 });
 
-// ── Lose Count Update ─────────────────────────────────────────
-app.put('/api/collect-data/lose/:email', express.json(), (req, res) => {
+// ── Upsert Submission ─────────────────────────────────────────
+app.put('/api/collect-data/:email', express.json(), (req, res) => {
   try {
     const { email } = req.params;
-    const { loseCount } = req.body;
+    const { firstName, lastName, joinDraw, phone, source, loseCount } = req.body;
 
-    if (loseCount == null) {
-      return res.status(400).json({ error: 'loseCount is required' });
-    }
+    const existing = db.prepare('SELECT id FROM submissions WHERE email = ?').get(email);
 
-    // Upsert: update if email exists, otherwise insert
-    const existing = db.prepare('SELECT id, loseCount FROM submissions WHERE email = ?').get(email);
     if (existing) {
-      db.prepare('UPDATE submissions SET loseCount = ? WHERE email = ?').run(loseCount, email);
-      res.json({ message: 'loseCount updated', email, loseCount });
+      db.prepare(`
+        UPDATE submissions SET
+          firstName = COALESCE(NULLIF(?, ''), firstName),
+          lastName = COALESCE(NULLIF(?, ''), lastName),
+          joinDraw = COALESCE(NULLIF(?, ''), joinDraw),
+          phone = COALESCE(NULLIF(?, ''), phone),
+          source = COALESCE(NULLIF(?, ''), source),
+          loseCount = COALESCE(?, loseCount)
+        WHERE email = ?
+      `).run(
+        (firstName || '').trim(),
+        (lastName || '').trim(),
+        joinDraw ? (joinDraw === true || joinDraw === 'yes' ? 'yes' : 'no') : '',
+        (phone || '').trim(),
+        (source || '').trim(),
+        loseCount != null ? loseCount : null,
+        email
+      );
+      res.json({ message: 'Submission updated', email });
     } else {
       const result = db.prepare(`
         INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run('', '', email, 'no', '', 'game-lose', loseCount);
-      res.status(201).json({ message: 'lose record created', email, loseCount, id: result.lastInsertRowid });
+      `).run(
+        (firstName || '').trim(),
+        (lastName || '').trim(),
+        email,
+        joinDraw ? (joinDraw === true || joinDraw === 'yes' ? 'yes' : 'no') : 'no',
+        (phone || '').trim(),
+        (source || 'game-lose').trim(),
+        loseCount != null ? loseCount : 0
+      );
+      res.status(201).json({ message: 'Submission created', email, id: result.lastInsertRowid });
     }
   } catch (err) {
-    console.error('Error updating lose count:', err);
+    console.error('Error upserting submission:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
