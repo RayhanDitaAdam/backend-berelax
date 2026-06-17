@@ -23,7 +23,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Range'],
   exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length']
 }));
-app.options('*', cors());
+
 app.use('/api/collect-data', express.json());
 app.use('/api/collect-data', express.urlencoded({ extended: true }));
 
