@@ -40,6 +40,7 @@ db.exec(`
     phone TEXT DEFAULT '',
     source TEXT DEFAULT '',
     loseCount INTEGER NOT NULL DEFAULT 0,
+    winCount INTEGER NOT NULL DEFAULT 0,
     status TEXT DEFAULT '',
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   )
@@ -48,6 +49,7 @@ db.exec(`
 // Add columns if upgrading from old schema
 try { db.exec(`ALTER TABLE submissions ADD COLUMN loseCount INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { db.exec(`ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT ''`); } catch {}
+try { db.exec(`ALTER TABLE submissions ADD COLUMN winCount INTEGER NOT NULL DEFAULT 0`); } catch {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS game_config (
@@ -98,15 +100,15 @@ app.get('/api/collect-data', (req, res) => {
 
 app.post('/api/collect-data', (req, res) => {
   try {
-    const { firstName, lastName, email, joinDraw, phone, source, loseCount, status } = req.body;
+    const { firstName, lastName, email, joinDraw, phone, source, loseCount, winCount, status } = req.body;
 
     if (!firstName || !lastName || !email) {
       return res.status(400).json({ error: 'firstName, lastName, and email are required' });
     }
 
     const stmt = db.prepare(`
-      INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount, winCount, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -117,6 +119,7 @@ app.post('/api/collect-data', (req, res) => {
       (phone || '').trim(),
       (source || '').trim(),
       loseCount != null ? loseCount : 0,
+      winCount != null ? winCount : 0,
       (status || '').trim()
     );
 
@@ -167,7 +170,7 @@ app.get('/api/visitors', (req, res) => {
 app.put('/api/collect-data/:email', express.json(), (req, res) => {
   try {
     const { email } = req.params;
-    const { firstName, lastName, joinDraw, phone, source, loseCount, status } = req.body;
+    const { firstName, lastName, joinDraw, phone, source, loseCount, winCount, status } = req.body;
 
     const existing = db.prepare('SELECT id FROM submissions WHERE email = ?').get(email);
 
@@ -180,6 +183,7 @@ app.put('/api/collect-data/:email', express.json(), (req, res) => {
           phone = COALESCE(NULLIF(?, ''), phone),
           source = COALESCE(NULLIF(?, ''), source),
           loseCount = COALESCE(?, loseCount),
+          winCount = COALESCE(?, winCount),
           status = COALESCE(NULLIF(?, ''), status)
         WHERE email = ?
       `).run(
@@ -189,14 +193,15 @@ app.put('/api/collect-data/:email', express.json(), (req, res) => {
         (phone || '').trim(),
         (source || '').trim(),
         loseCount != null ? loseCount : null,
+        winCount != null ? winCount : null,
         (status || '').trim(),
         email
       );
       res.json({ message: 'Submission updated', email });
     } else {
       const result = db.prepare(`
-        INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO submissions (firstName, lastName, email, joinDraw, phone, source, loseCount, winCount, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         (firstName || '').trim(),
         (lastName || '').trim(),
@@ -205,6 +210,7 @@ app.put('/api/collect-data/:email', express.json(), (req, res) => {
         (phone || '').trim(),
         (source || 'game-lose').trim(),
         loseCount != null ? loseCount : 0,
+        winCount != null ? winCount : 0,
         (status || '').trim()
       );
       res.status(201).json({ message: 'Submission created', email, id: result.lastInsertRowid });
